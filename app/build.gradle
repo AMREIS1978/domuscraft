@@ -1,0 +1,3 @@
+plugins { id 'com.android.application' }
+android { namespace 'pt.domuscraft.home'; compileSdk 35
+ defaultConfig { applicationId 'pt.domuscraft.home'; minSdk 24; targetSdk 35; versionCode 1; versionName '0.1' } }
