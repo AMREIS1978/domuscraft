@@ -25,15 +25,36 @@ function populateWorld(seed=1){while(environment.children.length){const o=enviro
 const houses=[[-30,-4,7,6],[-19,-4,7,8],[19,-5,8,7],[30,-4,9,8],[-29,19,9,8],[-16,21,7,7],[19,20,9,7],[32,19,8,9]];for(let i=0;i<houses.length;i++){let [x,z,w,d]=houses[i],height=3+(i%3)*.55;envBox(x,height/2,z,w,height,d,envMat.brick);envBox(x,height+.17,z,w+.6,.34,d+.6,envMat.tiles);for(let side of [-1,1]){envBox(x-w*.24,1.65,z+side*(d/2+.02),.9,1.05,.08,mats.glass);envBox(x+w*.24,1.65,z+side*(d/2+.02),.9,1.05,.08,mats.glass)}}
 for(let i=0;i<25;i++){let x=-49+i*4.1,z=(i%2===0?13:-31)+(i%4)*2.1;if(Math.abs(x)<12&&z>0)z=30;envTree(x,z,.72+(i%5)*.13)}}
 populateWorld();
-const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();const selectMat=new THREE.MeshBasicMaterial({color:0x42f5cf,transparent:true,opacity:.23,depthWrite:false,side:THREE.DoubleSide});let selectionOutline=null;const WALL_TYPES=new Set(['Parede','Porta','Janela']);const joints=new THREE.Group();scene.add(joints);
-function connectedRefresh(){while(joints.children.length){const o=joints.children[0];joints.remove(o);o.geometry?.dispose()}const at=(x,z)=>{const p=cells.get(key(x,z));return p&&WALL_TYPES.has(p.kind)?p:null};const walls=[...cells.values()].filter(p=>WALL_TYPES.has(p.kind));
-for(const p of walls){const x=!!at(p.x-1,p.z)||!!at(p.x+1,p.z),z=!!at(p.x,p.z-1)||!!at(p.x,p.z+1);if(p.autoOrient!==false){if(z&&!x)p.rotation=Math.PI/2;else if(x&&!z)p.rotation=0;p.group.rotation.y=p.rotation}}
-const edgePoints=new Map();const addEdge=(x,z)=>{const id=x.toFixed(3)+','+z.toFixed(3);edgePoints.set(id,[x,z])};
-for(const p of walls){const x=p.x-GRID/2+.5,z=p.z-GRID/2+.5;const alongZ=Math.abs(Math.round((p.rotation||0)/(Math.PI/2)))%2===1;const len=.56;addEdge(x+(alongZ?0:-len),z+(alongZ?-len:0));addEdge(x+(alongZ?0:len),z+(alongZ?len:0));}
-for(const p of walls){const x=p.x-GRID/2+.5,z=p.z-GRID/2+.5;const alongZ=Math.abs(Math.round((p.rotation||0)/(Math.PI/2)))%2===1;for(const q of walls){if(p===q)continue;const qx=q.x-GRID/2+.5,qz=q.z-GRID/2+.5;const qZ=Math.abs(Math.round((q.rotation||0)/(Math.PI/2)))%2===1;if(Math.abs(x-qx)+Math.abs(z-qz)!==1)continue;const px=x+(alongZ?0:(qx>x?.56:-.56)),pz=z+(alongZ?(qz>z?.56:-.56):0);const qpx=qx+(qZ?0:(x>qx?.56:-.56)),qpz=qz+(qZ?(z>qz?.56:-.56):0);const gap=Math.hypot(px-qpx,pz-qpz);if(gap>.01&&gap<1.15){const dx=qpx-px,dz=qpz-pz;const mesh=cube(joints,(px+qpx)/2,1.43,(pz+qpz)/2,Math.hypot(dx,dz)+.30,2.86,.30,'wall');mesh.rotation.y=-Math.atan2(dz,dx)}}}
+const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();const selectMat=new THREE.MeshBasicMaterial({color:0x42f5cf,transparent:true,opacity:.23,depthWrite:false,side:THREE.DoubleSide});let selectionOutline=null;const WALL_TYPES=new Set(['Parede','Porta','Janela']);// Continuous wall envelope: boolean union on a 5 cm construction raster.
+// Door/window modules retain their own geometry and openings.
+const joints=new THREE.Group();scene.add(joints);
+function connectedRefresh(){
+ while(joints.children.length){const o=joints.children[0];joints.remove(o);o.geometry?.dispose()}
+ const walls=[...cells.values()].filter(p=>WALL_TYPES.has(p.kind));
+ const at=(x,z)=>{const p=cells.get(key(x,z));return p&&WALL_TYPES.has(p.kind)?p:null};
+ for(const p of walls){if(p.autoOrient!==false){const x=!!at(p.x-1,p.z)||!!at(p.x+1,p.z),z=!!at(p.x,p.z-1)||!!at(p.x,p.z+1);if(z&&!x)p.rotation=Math.PI/2;else if(x&&!z)p.rotation=0;p.group.rotation.y=p.rotation}}
+ const unit=.05, N=Math.ceil(GRID/unit),solid=new Uint8Array(N*N);
+ const fill=(x0,z0,x1,z1)=>{let a=Math.max(0,Math.floor((x0+GRID/2)/unit)),b=Math.min(N,Math.ceil((x1+GRID/2)/unit));let c=Math.max(0,Math.floor((z0+GRID/2)/unit)),d=Math.min(N,Math.ceil((z1+GRID/2)/unit));for(let iz=c;iz<d;iz++)for(let ix=a;ix<b;ix++)solid[iz*N+ix]=1};
+ const orient=p=>Math.abs(Math.round((p.rotation||0)/(Math.PI/2)))%2;
+ for(const p of walls){if(p.kind!=='Parede')continue;const x=p.x-GRID/2+.5,z=p.z-GRID/2+.5;if(orient(p))fill(x-.15,z-.5,x+.15,z+.5);else fill(x-.5,z-.15,x+.5,z+.15)}
+ // Join adjacent aligned walls and bridge perpendicular corners with an
+ // axis-aligned junction rectangle. No floating diagonal joining elements.
+ for(const p of walls){if(p.kind!=='Parede')continue;const x=p.x-GRID/2+.5,z=p.z-GRID/2+.5;for(const [dx,dz] of [[1,0],[0,1]]){const q=at(p.x+dx,p.z+dz);if(!q||q.kind!=='Parede')continue;const qx=q.x-GRID/2+.5,qz=q.z-GRID/2+.5;if(orient(p)===orient(q)){if((dx&&!orient(p))||(dz&&orient(p)))fill(Math.min(x,qx)-.15,Math.min(z,qz)-.15,Math.max(x,qx)+.15,Math.max(z,qz)+.15)}else{const cx=(x+qx)/2,cz=(z+qz)/2;if(dx)fill(cx-.51,Math.min(z,qz)-.15,cx+.51,Math.max(z,qz)+.15);else fill(Math.min(x,qx)-.15,cz-.51,Math.max(x,qx)+.15,cz+.51)}}}
+ // Hide original solid modules. The unioned mesh has only external faces.
+ for(const p of walls)if(p.kind==='Parede')for(const child of p.group.children)child.visible=false;
+ const verts=[],normals=[],uv=[];const quad=(a,b,c,d,n)=>{for(const v of [a,b,c,a,c,d]){verts.push(...v);normals.push(...n);uv.push(v[0],v[2])}};
+ const occupied=(x,z)=>x>=0&&z>=0&&x<N&&z<N&&solid[z*N+x]===1;
+ for(let z=0;z<N;z++)for(let x=0;x<N;x++){if(!occupied(x,z))continue;const x0=x*unit-GRID/2,x1=x0+unit,z0=z*unit-GRID/2,z1=z0+unit,h=2.86;
+ quad([x0,h,z0],[x0,h,z1],[x1,h,z1],[x1,h,z0],[0,1,0]);
+ if(!occupied(x-1,z))quad([x0,0,z0],[x0,h,z0],[x0,h,z1],[x0,0,z1],[-1,0,0]);
+ if(!occupied(x+1,z))quad([x1,0,z1],[x1,h,z1],[x1,h,z0],[x1,0,z0],[1,0,0]);
+ if(!occupied(x,z-1))quad([x1,0,z0],[x1,h,z0],[x0,h,z0],[x0,0,z0],[0,0,-1]);
+ if(!occupied(x,z+1))quad([x0,0,z1],[x0,h,z1],[x1,h,z1],[x1,0,z1],[0,0,1]);
+ }
+ if(verts.length){const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));geo.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));const m=new THREE.Mesh(geo,mats.wall);m.castShadow=true;m.receiveShadow=true;joints.add(m)}
 }
 function addLawn(x,z){const k=key(x,z);if(surfaces.has(k)){scene.remove(surfaces.get(k));surfaces.delete(k)}let g=new THREE.Group();g.position.set(x-GRID/2+.5,0,z-GRID/2+.5);cube(g,0,.022,0,1.025,.045,1.025,'grass');let blades=new THREE.InstancedMesh(new THREE.PlaneGeometry(.045,.14),mats.grass,20);let d=new THREE.Object3D();for(let i=0;i<20;i++){let a=i*2.4,r=Math.sqrt((i+.5)/20)*.45;d.position.set(Math.cos(a)*r,.105,Math.sin(a)*r);d.rotation.y=a;d.updateMatrix();blades.setMatrixAt(i,d.matrix)}blades.instanceMatrix.needsUpdate=true;g.add(blades);g.userData.partKey='s:'+k;g.userData.kind='Relva';scene.add(g);surfaces.set(k,g)}
-function addFloor(x,z,kind){const k=key(x,z);if(surfaces.has(k)){scene.remove(surfaces.get(k));surfaces.delete(k)}let g=new THREE.Group();g.position.set(x-GRID/2+.5,0,z-GRID/2+.5);cube(g,0,kind==='Pavimento'?.11:.15,0,1.035,kind==='Pavimento'?.22:.3,1.035,kind==='Pavimento'?'floor':'foundation');g.userData.partKey='s:'+k;g.userData.kind=kind;scene.add(g);surfaces.set(k,g)}
+function addFloor(x,z,kind){const k=key(x,z);if(surfaces.has(k)){scene.remove(surfaces.get(k));surfaces.delete(k)}let g=new THREE.Group();g.position.set(x-GRID/2+.5,0,z-GRID/2+.5);cube(g,0,kind==='Pavimento'?.11:.15,0,1.004,kind==='Pavimento'?.22:.3,1.004,kind==='Pavimento'?'floor':'foundation');g.userData.partKey='s:'+k;g.userData.kind=kind;scene.add(g);surfaces.set(k,g)}
 function addTree(x,z){const k=key(x,z);if(trees.has(k)){scene.remove(trees.get(k));trees.delete(k)}let g=new THREE.Group();g.position.set(x-GRID/2+.5,0,z-GRID/2+.5);let seed=(x*73856093^z*19349663)>>>0;const rand=()=>{seed=(1664525*seed+1013904223)>>>0;return seed/4294967296};let h=2.6+rand()*1.3;let trunk=new THREE.Mesh(new THREE.CylinderGeometry(.105,.21,h,10),mats.wood);trunk.position.y=h/2;trunk.castShadow=true;g.add(trunk);for(let i=0;i<18;i++){let a=i*2.39996,r=.25+rand()*.95;let c=new THREE.Mesh(new THREE.IcosahedronGeometry(.42+rand()*.31,1),[mats.leaf,mats.leaf2,mats.leaf3][i%3]);c.position.set(Math.cos(a)*r,h*.68+rand()*h*.55,Math.sin(a)*r);c.scale.set(.9+rand()*.4,.75+rand()*.65,.9+rand()*.4);c.castShadow=true;g.add(c)}g.userData.partKey='t:'+k;scene.add(g);trees.set(k,g)}
 function removeAt(k,layer){if(layer==='surface'&&surfaces.has(k)){scene.remove(surfaces.get(k));surfaces.delete(k)}else if(layer==='tree'&&trees.has(k)){scene.remove(trees.get(k));trees.delete(k)}else if(cells.has(k)){scene.remove(cells.get(k).group);cells.delete(k)}connectedRefresh();cost()}
 let panX=0,panZ=0,navMode='orbit';function updateCamera(){camera.position.set(panX+Math.sin(yaw)*Math.cos(tilt)*dist,Math.sin(tilt)*dist,panZ+Math.cos(yaw)*Math.cos(tilt)*dist);camera.lookAt(panX,0,panZ)}updateCamera();
